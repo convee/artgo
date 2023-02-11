@@ -80,8 +80,24 @@ func (c *Context) Data(code int, data []byte) {
 	_, _ = c.Writer.Write(data)
 }
 
+// HTML 输出 html
 func (c *Context) HTML(code int, html string) {
 	c.SetHeader("Content-Type", "text/html")
 	c.Status(code)
 	_, _ = c.Writer.Write([]byte(html))
+}
+
+// Redirect 重定向
+func (c *Context) Redirect(code int, location string) {
+	http.Redirect(c.Writer, c.Req, location, code)
+}
+
+// Error 返回错误状态
+func (c *Context) Error(code int, err string) {
+	http.Error(c.Writer, err, code)
+}
+
+// SetCookie 设置 cookie
+func (c Context) SetCookie(cookie *http.Cookie) {
+	http.SetCookie(c.Writer, cookie)
 }
