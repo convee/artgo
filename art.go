@@ -2,6 +2,7 @@ package artgo
 
 import (
 	"net/http"
+	"path"
 	"strings"
 )
 
@@ -60,6 +61,38 @@ func (g *RouterGroup) GET(pattern string, handler HandlerFunc) {
 func (g *RouterGroup) POST(pattern string, handler HandlerFunc) {
 	g.addRoute("POST", pattern, handler)
 }
+
+// create static handler
+func (g *RouterGroup) createStaticHandler(relativePath string, fs http.FileSystem) HandlerFunc {
+	absolutePath := path.Join(g.name, relativePath)
+	fileServer := http.StripPrefix(absolutePath, http.FileServer(fs))
+	return func(c *Context) {
+		file := c.Param("filepath")
+		// Check if file exists and/or if we have permission to access it
+		if _, err := fs.Open(file); err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		fileServer.ServeHTTP(c.Writer, c.Req)
+	}
+}
+
+// serve static files
+func (g *RouterGroup) Static(relativePath string, root string) {
+	handler := g.createStaticHandler(relativePath, http.Dir(root))
+	urlPattern := path.Join(relativePath, "/*filepath")
+	// Register GET handlers
+	g.GET(urlPattern, handler)
+}
+
+func (g *RouterGroup) StaticFs(pattern, path, dir string) {
+	handler := func(c *Context) {
+		http.StripPrefix(path, http.FileServer(http.Dir(dir))).ServeHTTP(c.Writer, c.Req)
+	}
+	g.addRoute("GET", pattern, handler)
+}
+
 func (e *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var middlewares []HandlerFunc
 	for _, group := range e.routerGroups {
