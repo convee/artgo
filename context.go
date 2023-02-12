@@ -3,6 +3,7 @@ package artgo
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 )
 
@@ -98,6 +99,18 @@ func (c *Context) Error(code int, err string) {
 }
 
 // SetCookie 设置 cookie
-func (c Context) SetCookie(cookie *http.Cookie) {
+func (c *Context) SetCookie(cookie *http.Cookie) {
 	http.SetCookie(c.Writer, cookie)
+}
+
+func (c *Context) Render(data interface{}, filenames ...string) error {
+	t, err := template.ParseFiles(filenames...)
+	if err != nil {
+		return err
+	}
+	err = t.Execute(c.Writer, data)
+	if err != nil {
+		return err
+	}
+	return nil
 }
