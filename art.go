@@ -1,6 +1,7 @@
 package artgo
 
 import (
+	"html/template"
 	"net/http"
 	"path"
 	"strings"
@@ -10,8 +11,10 @@ type HandlerFunc func(*Context)
 
 type Engine struct {
 	*RouterGroup
-	router       *router
-	routerGroups []*RouterGroup
+	router        *router
+	routerGroups  []*RouterGroup
+	htmlTemplates *template.Template
+	funcMap       template.FuncMap
 }
 
 type RouterGroup struct {
@@ -54,15 +57,17 @@ func (g *RouterGroup) addRoute(method string, comp string, handler HandlerFunc) 
 	g.engine.router.addRoute(method, pattern, handler)
 }
 
+//GET 将 GET 路由加载到内存
 func (g *RouterGroup) GET(pattern string, handler HandlerFunc) {
 	g.addRoute("GET", pattern, handler)
 }
 
+//POST 将 POST 路由加载到内存
 func (g *RouterGroup) POST(pattern string, handler HandlerFunc) {
 	g.addRoute("POST", pattern, handler)
 }
 
-// create static handler
+// createStaticHandler 创建静态文件 handler
 func (g *RouterGroup) createStaticHandler(relativePath string, fs http.FileSystem) HandlerFunc {
 	absolutePath := path.Join(g.name, relativePath)
 	fileServer := http.StripPrefix(absolutePath, http.FileServer(fs))
@@ -78,7 +83,7 @@ func (g *RouterGroup) createStaticHandler(relativePath string, fs http.FileSyste
 	}
 }
 
-// serve static files
+// Static 静态文件服务
 func (g *RouterGroup) Static(relativePath string, root string) {
 	handler := g.createStaticHandler(relativePath, http.Dir(root))
 	urlPattern := path.Join(relativePath, "/*filepath")
@@ -86,13 +91,17 @@ func (g *RouterGroup) Static(relativePath string, root string) {
 	g.GET(urlPattern, handler)
 }
 
-func (g *RouterGroup) StaticFs(pattern, path, dir string) {
-	handler := func(c *Context) {
-		http.StripPrefix(path, http.FileServer(http.Dir(dir))).ServeHTTP(c.Writer, c.Req)
-	}
-	g.addRoute("GET", pattern, handler)
+// SetFuncMap 渲染自定义模板
+func (e *Engine) SetFuncMap(funcMap template.FuncMap) {
+	e.funcMap = funcMap
 }
 
+// LoadHTMLGlob 加载模板到内存
+func (e *Engine) LoadHTMLGlob(pattern string) {
+	e.htmlTemplates = template.Must(template.New("").Funcs(e.funcMap).ParseGlob(pattern))
+}
+
+// ServeHTTP 实现 http.Handler 接口
 func (e *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var middlewares []HandlerFunc
 	for _, group := range e.routerGroups {
@@ -106,6 +115,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	e.router.handle(c)
 }
 
+// Run 启动自定义 http 服务器
 func (e *Engine) Run(addr string) (err error) {
 	return http.ListenAndServe(addr, e)
 }

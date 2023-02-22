@@ -1,4 +1,5 @@
 package artgo
+
 import (
 	"fmt"
 	"strings"
@@ -51,7 +52,7 @@ func (n *node) search(parts []string, height int) *node {
 	return nil
 }
 
-func (n *node) travel(list *([]*node)) {
+func (n *node) travel(list *[]*node) {
 	if n.pattern != "" {
 		*list = append(*list, n)
 	}
