@@ -3,7 +3,8 @@ package artgo
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
+	"github.com/golang/protobuf/proto"
+	"io/ioutil"
 	"net/http"
 )
 
@@ -48,6 +49,15 @@ func (c *Context) Param(key string) string {
 // PostForm 获取 POST 参数
 func (c *Context) PostForm(key string) string {
 	return c.Req.FormValue(key)
+}
+
+// PostBody 读取 Body
+func (c *Context) PostBody() []byte {
+	body, err := ioutil.ReadAll(c.Req.Body)
+	if err != nil {
+		return []byte(err.Error())
+	}
+	return body
 }
 
 // Query 获取 GET 参数
@@ -113,15 +123,36 @@ func (c *Context) SetCookie(cookie *http.Cookie) {
 	http.SetCookie(c.Writer, cookie)
 }
 
-// Render 渲染模板
-func (c *Context) Render(data interface{}, filenames ...string) error {
-	t, err := template.ParseFiles(filenames...)
-	if err != nil {
-		return err
-	}
-	err = t.Execute(c.Writer, data)
-	if err != nil {
-		return err
-	}
-	return nil
+func (c *Context) Bind(binding Binding, out interface{}) error {
+	return binding.Bind(c, out)
+}
+
+func (c *Context) BindJson(out interface{}) error {
+	return BindJson.Bind(c, out)
+}
+
+func (c *Context) BindProtobuf(out proto.Message) error {
+	return BindProtoBuf.Bind(c, out)
+}
+
+// BindQuery use json tag
+func (c *Context) BindQuery(out interface{}) error {
+	return BindQuery.Bind(c, out)
+}
+
+// BindForm use json tag
+func (c *Context) BindForm(out interface{}) error {
+	return BindForm.Bind(c, out)
+}
+
+func (c *Context) Render(render Render, code int, in interface{}) error {
+	return render.Render(c, code, in)
+}
+
+func (c *Context) RenderJson(code int, in interface{}) error {
+	return RenderJson.Render(c, code, in)
+}
+
+func (c *Context) RenderProtoBuf(code int, in proto.Message) error {
+	return RenderProtoBuf.Render(c, code, in)
 }
