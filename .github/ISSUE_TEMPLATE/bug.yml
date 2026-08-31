@@ -1,0 +1,38 @@
+name: Bug report
+description: 报告可复现的 artgo 缺陷
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: artgo 版本
+      placeholder: v1.1.0 或 commit SHA
+    validations:
+      required: true
+  - type: input
+    id: go-version
+    attributes:
+      label: Go 版本
+      placeholder: go version ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 最小复现代码或请求
+      description: 请优先提供可直接运行的 Go 代码或 httptest 用例。
+    validations:
+      required: true

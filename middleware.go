@@ -11,7 +11,9 @@ func Recovery() HandlerFunc {
 	return func(c *Context) {
 		defer func() {
 			if err := recover(); err != nil {
-				c.Status(http.StatusInternalServerError)
+				if c.StatusCode == 0 {
+					c.Status(http.StatusInternalServerError)
+				}
 				log.Printf("panic:method[%s];err[%v];stack[%v]", c.Method, err, string(debug.Stack()))
 			}
 		}()

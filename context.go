@@ -1,25 +1,29 @@
 package artgo
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
-	"github.com/golang/protobuf/proto"
-	"io/ioutil"
+	"io"
 	"net/http"
 )
 
 type H map[string]interface{}
 
 type Context struct {
-	engine     *Engine
-	Writer     http.ResponseWriter
-	Req        *http.Request
-	Path       string
-	Method     string
-	Params     map[string]string
-	StatusCode int
-	handlers   []HandlerFunc
-	index      int
+	engine      *Engine
+	Writer      http.ResponseWriter
+	Req         *http.Request
+	Path        string
+	Method      string
+	Params      map[string]string
+	StatusCode  int
+	handlers    []HandlerFunc
+	index       int
+	aborted     bool
+	body        []byte
+	bodyErr     error
+	bodyRead    bool
+	wroteHeader bool
 }
 
 func newContext(w http.ResponseWriter, req *http.Request) *Context {
@@ -33,11 +37,25 @@ func newContext(w http.ResponseWriter, req *http.Request) *Context {
 }
 
 func (c *Context) Next() {
+	if c.index >= len(c.handlers) {
+		return
+	}
 	c.index++
 	s := len(c.handlers)
 	for ; c.index < s; c.index++ {
 		c.handlers[c.index](c)
 	}
+}
+
+// Abort prevents remaining handlers in the current chain from running.
+func (c *Context) Abort() {
+	c.index = len(c.handlers)
+	c.aborted = true
+}
+
+// IsAborted reports whether the current handler chain has been aborted.
+func (c *Context) IsAborted() bool {
+	return c.aborted
 }
 
 // Param 获取路由参数
@@ -53,11 +71,16 @@ func (c *Context) PostForm(key string) string {
 
 // PostBody 读取 Body
 func (c *Context) PostBody() []byte {
-	body, err := ioutil.ReadAll(c.Req.Body)
-	if err != nil {
-		return []byte(err.Error())
+	body, _ := c.postBody()
+	return append([]byte(nil), body...)
+}
+
+func (c *Context) postBody() ([]byte, error) {
+	if !c.bodyRead {
+		c.body, c.bodyErr = io.ReadAll(c.Req.Body)
+		c.bodyRead = true
 	}
-	return body
+	return c.body, c.bodyErr
 }
 
 // Query 获取 GET 参数
@@ -67,7 +90,11 @@ func (c *Context) Query(key string) string {
 
 // Status 设置响应状态码
 func (c *Context) Status(code int) {
+	if c.wroteHeader {
+		return
+	}
 	c.StatusCode = code
+	c.wroteHeader = true
 	c.Writer.WriteHeader(code)
 }
 
@@ -78,44 +105,65 @@ func (c *Context) SetHeader(key string, value string) {
 
 // String 返回格式化字符串
 func (c *Context) String(code int, format string, values ...interface{}) {
-	c.SetHeader("Content-Type", "text/plain")
+	c.SetHeader("Content-Type", ContentTypeTextPlain)
 	c.Status(code)
 	_, _ = c.Writer.Write([]byte(fmt.Sprintf(format, values...)))
 }
 
 // JSON 返回 json 数据
 func (c *Context) JSON(code int, obj interface{}) {
-	c.SetHeader("Content-Type", "application/json")
-	c.Status(code)
-	encoder := json.NewEncoder(c.Writer)
-	if err := encoder.Encode(obj); err != nil {
-		http.Error(c.Writer, err.Error(), http.StatusInternalServerError)
+	data, err := JSON.Marshal(obj)
+	if err != nil {
+		c.Error(http.StatusInternalServerError, err.Error())
+		return
 	}
+	c.SetHeader("Content-Type", ContentTypeJson)
+	c.Status(code)
+	_, _ = c.Writer.Write(data)
+	_, _ = c.Writer.Write([]byte("\n"))
 }
 
 // Data 返回文本数据
 func (c *Context) Data(code int, data []byte) {
+	if code == 0 {
+		code = http.StatusOK
+	}
 	c.Status(code)
 	_, _ = c.Writer.Write(data)
 }
 
 // HTML 输出 html
 func (c *Context) HTML(code int, name string, data interface{}) {
-	c.SetHeader("Content-Type", "text/html")
-	c.Status(code)
-	if err := c.engine.htmlTemplates.ExecuteTemplate(c.Writer, name, data); err != nil {
-		c.Error(http.StatusInternalServerError, err.Error())
+	if c.engine == nil || c.engine.htmlTemplates == nil {
+		c.Error(http.StatusInternalServerError, "html templates are not loaded")
+		return
 	}
+	var output bytes.Buffer
+	if err := c.engine.htmlTemplates.ExecuteTemplate(&output, name, data); err != nil {
+		c.Error(http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.SetHeader("Content-Type", ContentTypeHtml)
+	c.Status(code)
+	_, _ = c.Writer.Write(output.Bytes())
 }
 
 // Redirect 重定向
 func (c *Context) Redirect(code int, location string) {
+	if c.wroteHeader {
+		return
+	}
+	c.StatusCode = code
 	http.Redirect(c.Writer, c.Req, location, code)
+	c.wroteHeader = true
 }
 
 // Error 返回错误状态
 func (c *Context) Error(code int, err string) {
-	http.Error(c.Writer, err, code)
+	c.SetHeader("Content-Type", ContentTypeTextPlain)
+	c.Status(code)
+	_, _ = c.Writer.Write([]byte(err))
+	_, _ = c.Writer.Write([]byte("\n"))
 }
 
 // SetCookie 设置 cookie
@@ -131,7 +179,7 @@ func (c *Context) BindJson(out interface{}) error {
 	return BindJson.Bind(c, out)
 }
 
-func (c *Context) BindProtobuf(out proto.Message) error {
+func (c *Context) BindProtobuf(out interface{}) error {
 	return BindProtoBuf.Bind(c, out)
 }
 
@@ -153,6 +201,6 @@ func (c *Context) RenderJson(code int, in interface{}) error {
 	return RenderJson.Render(c, code, in)
 }
 
-func (c *Context) RenderProtoBuf(code int, in proto.Message) error {
+func (c *Context) RenderProtoBuf(code int, in interface{}) error {
 	return RenderProtoBuf.Render(c, code, in)
 }

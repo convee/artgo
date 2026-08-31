@@ -1,14 +1,14 @@
 package artgo
 
 import (
-	"bytes"
+	"errors"
+	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
 
-	"github.com/golang/protobuf/jsonpb"
-	"github.com/golang/protobuf/proto"
-	"github.com/pkg/errors"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 type Binding interface {
@@ -28,8 +28,12 @@ type bindJson struct {
 }
 
 func (bindJson) Bind(ctx *Context, out interface{}) error {
+	body, err := ctx.postBody()
+	if err != nil {
+		return err
+	}
 
-	err := JSON.Unmarshal(ctx.PostBody(), out)
+	err = JSON.Unmarshal(body, out)
 	if err == nil && structValidator.enabled {
 		err = structValidator.ValidateStruct(out)
 	}
@@ -40,17 +44,33 @@ type bindProtoBuf struct {
 }
 
 func (bindProtoBuf) Bind(ctx *Context, out interface{}) error {
-	if EnableBindProtoBufAsJsonPB || strings.HasPrefix(ctx.Req.Header.Get("Content-Type"), ContentTypeJson) {
+	if EnableBindProtoBufAsJsonPB || requestIsJSON(ctx) {
 		return BindJsonPB.Bind(ctx, out)
 	}
-	return proto.Unmarshal(ctx.PostBody(), out.(proto.Message))
+	message, err := protobufMessage(out)
+	if err != nil {
+		return err
+	}
+	body, err := ctx.postBody()
+	if err != nil {
+		return err
+	}
+	return proto.Unmarshal(body, message)
 }
 
 type bindJsonPB struct {
 }
 
 func (bindJsonPB) Bind(ctx *Context, out interface{}) error {
-	return jsonpb.Unmarshal(bytes.NewReader(ctx.PostBody()), out.(proto.Message))
+	message, err := protobufMessage(out)
+	if err != nil {
+		return err
+	}
+	body, err := ctx.postBody()
+	if err != nil {
+		return err
+	}
+	return protojson.Unmarshal(body, message)
 }
 
 type bindQuery struct {
@@ -60,7 +80,7 @@ func (b bindQuery) Bind(ctx *Context, out interface{}) error {
 	m := map[string]string{}
 	query := ctx.Req.URL.Query()
 	for key, value := range query {
-		m[strings.ToLower(key)] = value[0]
+		m[strings.ToLower(key)] = firstValue(value)
 	}
 	return bindMap(m, out)
 }
@@ -69,19 +89,40 @@ type bindForm struct {
 }
 
 func (b bindForm) Bind(ctx *Context, out interface{}) error {
+	if ctx.Req.MultipartForm == nil {
+		if err := ctx.Req.ParseMultipartForm(32 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+			return err
+		}
+	}
 	m := map[string]string{}
-	for key, vs := range ctx.Req.MultipartForm.Value {
-		m[strings.ToLower(key)] = vs[len(vs)-1]
+	if ctx.Req.MultipartForm != nil {
+		for key, vs := range ctx.Req.MultipartForm.Value {
+			m[strings.ToLower(key)] = lastValue(vs)
+		}
 	}
 	post := ctx.Req.PostForm
 	for key, value := range post {
-		m[strings.ToLower(key)] = value[0]
+		m[strings.ToLower(key)] = firstValue(value)
 	}
 	query := ctx.Req.URL.Query()
 	for key, value := range query {
-		m[strings.ToLower(key)] = value[0]
+		m[strings.ToLower(key)] = firstValue(value)
 	}
 	return bindMap(m, out)
+}
+
+func firstValue(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func lastValue(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[len(values)-1]
 }
 
 func bindMap(args map[string]string, out interface{}) error {
