@@ -17,6 +17,7 @@ type Context struct {
 	Method      string
 	Params      map[string]string
 	StatusCode  int
+	keys        map[string]any
 	handlers    []HandlerFunc
 	index       int
 	aborted     bool
@@ -58,10 +59,40 @@ func (c *Context) IsAborted() bool {
 	return c.aborted
 }
 
+// Set 在当前请求上下文中存入键值，供后续中间件与 handler 读取。
+// 仅在单个请求的处理链内有效，不跨请求共享。
+func (c *Context) Set(key string, value any) {
+	if c.keys == nil {
+		c.keys = make(map[string]any)
+	}
+	c.keys[key] = value
+}
+
+// Get 读取 Set 存入的值，第二个返回值表示键是否存在
+func (c *Context) Get(key string) (any, bool) {
+	value, exists := c.keys[key]
+	return value, exists
+}
+
+// MustGet 读取 Set 存入的值，键不存在时 panic
+func (c *Context) MustGet(key string) any {
+	value, exists := c.Get(key)
+	if !exists {
+		panic(fmt.Sprintf("key %q does not exist in context", key))
+	}
+	return value
+}
+
+// GetString 读取字符串值，键不存在或类型不符时返回零值
+func (c *Context) GetString(key string) string {
+	value, _ := c.Get(key)
+	s, _ := value.(string)
+	return s
+}
+
 // Param 获取路由参数
 func (c *Context) Param(key string) string {
-	value, _ := c.Params[key]
-	return value
+	return c.Params[key]
 }
 
 // PostForm 获取 POST 参数

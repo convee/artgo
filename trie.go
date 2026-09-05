@@ -10,7 +10,6 @@ type node struct {
 	part           string
 	handlers       []HandlerFunc
 	params         []routeParam
-	children       []*node
 	staticChildren map[string]*node
 	wildcardChild  *node
 	isWild         bool
@@ -58,7 +57,6 @@ func (n *node) childFor(part string) (*node, error) {
 		}
 		child := &node{part: part}
 		n.staticChildren[part] = child
-		n.children = append(n.children, child)
 		return child, nil
 	}
 
@@ -68,7 +66,6 @@ func (n *node) childFor(part string) (*node, error) {
 	}
 	if n.wildcardChild == nil {
 		n.wildcardChild = &node{part: part, isWild: true}
-		n.children = append(n.children, n.wildcardChild)
 		return n.wildcardChild, nil
 	}
 	if n.wildcardChild.part != part {

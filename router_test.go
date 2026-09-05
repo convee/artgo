@@ -197,3 +197,95 @@ func assertResponse(t *testing.T, handler http.Handler, method, target string, w
 		t.Fatalf("%s %s body = %q, want %q", method, target, recorder.Body.String(), wantBody)
 	}
 }
+
+func TestAllVerbsAreRoutable(t *testing.T) {
+	router := artgo.New()
+	register := map[string]func(string, artgo.HandlerFunc){
+		http.MethodGet:     router.GET,
+		http.MethodPost:    router.POST,
+		http.MethodPut:     router.PUT,
+		http.MethodDelete:  router.DELETE,
+		http.MethodPatch:   router.PATCH,
+		http.MethodHead:    router.HEAD,
+		http.MethodOptions: router.OPTIONS,
+	}
+	for method, register := range register {
+		method := method
+		register("/things/"+strings.ToLower(method), func(c *artgo.Context) {
+			c.String(http.StatusOK, "handled=%s", method)
+		})
+	}
+
+	for method := range register {
+		assertResponse(t, router, method, "/things/"+strings.ToLower(method),
+			http.StatusOK, "handled="+method)
+	}
+}
+
+func TestHandleRegistersArbitraryMethod(t *testing.T) {
+	router := artgo.New()
+	router.Handle("REPORT", "/docs", func(c *artgo.Context) {
+		c.String(http.StatusOK, "report")
+	})
+
+	assertResponse(t, router, "REPORT", "/docs", http.StatusOK, "report")
+}
+
+func TestAnyRegistersEveryStandardVerb(t *testing.T) {
+	router := artgo.New()
+	router.Any("/ping", func(c *artgo.Context) {
+		c.String(http.StatusOK, "pong")
+	})
+
+	for _, method := range []string{
+		http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete,
+		http.MethodPatch, http.MethodHead, http.MethodOptions,
+	} {
+		assertResponse(t, router, method, "/ping", http.StatusOK, "pong")
+	}
+}
+
+func TestKnownPathWithWrongMethodReturns405WithAllowHeader(t *testing.T) {
+	router := artgo.New()
+	router.GET("/articles/:id", func(c *artgo.Context) { c.String(http.StatusOK, "get") })
+	router.DELETE("/articles/:id", func(c *artgo.Context) { c.String(http.StatusOK, "delete") })
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/articles/7", nil))
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
+	}
+	// Allow 头必须稳定排序：roots 是 map，未排序时该断言会随机失败
+	if got := recorder.Header().Get("Allow"); got != "DELETE, GET" {
+		t.Fatalf("Allow = %q, want %q", got, "DELETE, GET")
+	}
+}
+
+func TestUnknownPathStillReturns404(t *testing.T) {
+	router := artgo.New()
+	router.GET("/articles/:id", func(c *artgo.Context) { c.String(http.StatusOK, "get") })
+
+	assertResponse(t, router, http.MethodPost, "/nowhere",
+		http.StatusNotFound, "404 NOT FOUND: /nowhere\n")
+}
+
+func TestGlobalMiddlewareStillRunsOnFallbackResponses(t *testing.T) {
+	router := artgo.New()
+	var ran bool
+	router.Use(func(c *artgo.Context) {
+		ran = true
+		c.Next()
+	})
+	router.GET("/only-get", func(c *artgo.Context) { c.String(http.StatusOK, "ok") })
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/only-get", nil))
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", recorder.Code)
+	}
+	if !ran {
+		t.Fatal("global middleware did not run on the 405 path")
+	}
+}

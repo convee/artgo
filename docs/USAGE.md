@@ -33,7 +33,18 @@ e.POST("/users", func(c *artgo.Context) {
 })
 ```
 
-当前公开注册方法只有 `GET` 和 `POST`。
+公开注册方法为 `GET`、`POST`、`PUT`、`DELETE`、`PATCH`、`HEAD`、`OPTIONS`。
+`Handle` 可注册任意方法（含 WebDAV 等自定义动词），`Any` 一次注册上述全部标准方法：
+
+```go
+e.PUT("/users/:id", updateUser)
+e.DELETE("/users/:id", deleteUser)
+e.Handle("REPORT", "/docs", reportDocs)
+e.Any("/ping", pong)
+```
+
+路径已注册但请求方法不匹配时返回 `405 Method Not Allowed`，并按 RFC 9110 要求带上
+`Allow` 响应头（值已排序，跨请求稳定）；路径本身不存在才返回 404。
 
 ## 分组与中间件
 
@@ -159,6 +170,56 @@ e.GET("/template/:name", func(c *artgo.Context) {
 
 e.Static("/static", "./static")
 ```
+
+## 请求级键值存储
+
+中间件与 handler 之间通过 `Context` 传值，作用域仅限单个请求，不跨请求共享：
+
+```go
+e.Use(func(c *artgo.Context) {
+	c.Set("userID", authenticate(c))
+	c.Next()
+})
+
+e.GET("/me", func(c *artgo.Context) {
+	userID, ok := c.Get("userID")
+	if !ok {
+		c.String(http.StatusUnauthorized, "unauthorized\n")
+		return
+	}
+	c.RenderJson(http.StatusOK, artgo.H{"user": userID})
+})
+```
+
+`MustGet` 在键不存在时 panic，`GetString` 返回字符串值（键不存在或类型不符时返回零值）。
+
+## 优雅关闭
+
+`Run` 启动的服务器可以用 `Shutdown` 停止接受新连接并等待在途请求完成，
+`Run` 随之返回 `http.ErrServerClosed`：
+
+```go
+e := artgo.Default()
+e.GET("/health", func(c *artgo.Context) { c.String(http.StatusOK, "ok") })
+
+go func() {
+	if err := e.Run(":8080"); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+}()
+
+stop := make(chan os.Signal, 1)
+signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+<-stop
+
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+if err := e.Shutdown(ctx); err != nil {
+	log.Printf("shutdown: %v", err)
+}
+```
+
+未调用过 `Run` 时 `Shutdown` 返回 nil。若自行组合 `http.Server`（见下节），请直接使用该 server 的 `Shutdown`。
 
 `LoadHTMLGlob` 和 `Static` 的路径相对于进程当前工作目录。`examples/basic` 明确要求先进入示例目录执行 `go run .`，避免从仓库根目录运行时找不到模板和静态资源。
 

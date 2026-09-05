@@ -70,3 +70,27 @@ func BenchmarkServeHTTP_JSONPost(b *testing.B) {
 		return req
 	})
 }
+
+// newEngineWithGlobalMiddleware 反映真实用法：生产服务几乎都会挂全局中间件。
+// 这一路径此前每个请求都要拷贝一次全局中间件切片，即使请求命中了路由。
+func newEngineWithGlobalMiddleware() *artgo.Engine {
+	e := newEngine()
+	e.Use(func(c *artgo.Context) { c.Next() })
+	e.Use(func(c *artgo.Context) { c.Next() })
+	e.Use(func(c *artgo.Context) { c.Next() })
+	return e
+}
+
+func BenchmarkServeHTTP_StaticRouteWithGlobalMiddleware(b *testing.B) {
+	e := newEngineWithGlobalMiddleware()
+	serve(b, e, func() *http.Request {
+		return httptest.NewRequest(http.MethodGet, "/health", nil)
+	})
+}
+
+func BenchmarkServeHTTP_ParamRouteWithGlobalMiddleware(b *testing.B) {
+	e := newEngineWithGlobalMiddleware()
+	serve(b, e, func() *http.Request {
+		return httptest.NewRequest(http.MethodGet, "/users/123", nil)
+	})
+}
