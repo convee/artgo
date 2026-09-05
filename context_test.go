@@ -156,3 +156,51 @@ func TestStaticFileServingUpdatesContextStatus(t *testing.T) {
 	assert.Equal(t, http.StatusOK, observedStatus)
 	assert.Contains(t, recorder.Body.String(), "export const ok")
 }
+
+func TestContextStorePassesValuesBetweenMiddlewareAndHandler(t *testing.T) {
+	router := artgo.New()
+	router.Use(func(c *artgo.Context) {
+		c.Set("user", "alice")
+		c.Next()
+	})
+	router.GET("/me", func(c *artgo.Context) {
+		value, exists := c.Get("user")
+		assert.True(t, exists)
+		c.String(http.StatusOK, "user=%v store=%s", value, c.GetString("user"))
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/me", nil))
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "user=alice store=alice", recorder.Body.String())
+}
+
+func TestContextStoreIsolatesRequests(t *testing.T) {
+	router := artgo.New()
+	router.GET("/first", func(c *artgo.Context) {
+		c.Set("leak", "value")
+		c.String(http.StatusOK, "ok")
+	})
+	router.GET("/second", func(c *artgo.Context) {
+		_, exists := c.Get("leak")
+		assert.False(t, exists, "value leaked across requests")
+		c.String(http.StatusOK, "ok")
+	})
+
+	for _, target := range []string{"/first", "/second"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+		assert.Equal(t, http.StatusOK, recorder.Code)
+	}
+}
+
+func TestContextGetOnMissingKey(t *testing.T) {
+	context := &artgo.Context{}
+
+	value, exists := context.Get("absent")
+	assert.False(t, exists)
+	assert.Nil(t, value)
+	assert.Equal(t, "", context.GetString("absent"))
+	assert.Panics(t, func() { context.MustGet("absent") })
+}

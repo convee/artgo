@@ -1,10 +1,12 @@
 package artgo
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
 	"path"
+	"sync"
 	"time"
 )
 
@@ -15,6 +17,15 @@ type Engine struct {
 	router        *router
 	htmlTemplates *template.Template
 	funcMap       template.FuncMap
+
+	mu     sync.Mutex
+	server *http.Server
+}
+
+// anyMethods 是 Any 注册的方法集合，也是框架承诺支持的动词全集
+var anyMethods = []string{
+	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete,
+	http.MethodPatch, http.MethodHead, http.MethodOptions,
 }
 
 type RouterGroup struct {
@@ -77,14 +88,51 @@ func (g *RouterGroup) collectHandlers(chain *[]HandlerFunc) {
 	*chain = append(*chain, g.middlewares...)
 }
 
+// Handle 以任意 HTTP 方法注册路由，是所有动词方法的公共入口
+func (g *RouterGroup) Handle(method string, pattern string, handler HandlerFunc) {
+	g.addRoute(method, pattern, handler)
+}
+
 // GET 将 GET 路由加载到内存
 func (g *RouterGroup) GET(pattern string, handler HandlerFunc) {
-	g.addRoute("GET", pattern, handler)
+	g.addRoute(http.MethodGet, pattern, handler)
 }
 
 // POST 将 POST 路由加载到内存
 func (g *RouterGroup) POST(pattern string, handler HandlerFunc) {
-	g.addRoute("POST", pattern, handler)
+	g.addRoute(http.MethodPost, pattern, handler)
+}
+
+// PUT 将 PUT 路由加载到内存
+func (g *RouterGroup) PUT(pattern string, handler HandlerFunc) {
+	g.addRoute(http.MethodPut, pattern, handler)
+}
+
+// DELETE 将 DELETE 路由加载到内存
+func (g *RouterGroup) DELETE(pattern string, handler HandlerFunc) {
+	g.addRoute(http.MethodDelete, pattern, handler)
+}
+
+// PATCH 将 PATCH 路由加载到内存
+func (g *RouterGroup) PATCH(pattern string, handler HandlerFunc) {
+	g.addRoute(http.MethodPatch, pattern, handler)
+}
+
+// HEAD 将 HEAD 路由加载到内存
+func (g *RouterGroup) HEAD(pattern string, handler HandlerFunc) {
+	g.addRoute(http.MethodHead, pattern, handler)
+}
+
+// OPTIONS 将 OPTIONS 路由加载到内存
+func (g *RouterGroup) OPTIONS(pattern string, handler HandlerFunc) {
+	g.addRoute(http.MethodOptions, pattern, handler)
+}
+
+// Any 为 anyMethods 中的每个方法注册同一个 handler
+func (g *RouterGroup) Any(pattern string, handler HandlerFunc) {
+	for _, method := range anyMethods {
+		g.addRoute(method, pattern, handler)
+	}
 }
 
 // createStaticHandler 创建静态文件 handler
@@ -136,6 +184,7 @@ func (g *RouterGroup) Static(relativePath string, root string) {
 	urlPattern := path.Join(relativePath, "/*filepath")
 	// Register GET handlers
 	g.GET(urlPattern, handler)
+	g.HEAD(urlPattern, handler)
 }
 
 // SetFuncMap 渲染自定义模板
@@ -152,7 +201,7 @@ func (e *Engine) LoadHTMLGlob(pattern string) {
 func (e *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	c := newContext(w, req)
 	c.engine = e
-	e.router.handle(c, e.RouterGroup.middlewaresCopy())
+	e.router.handle(c)
 }
 
 // Run 启动自定义 http 服务器
@@ -162,12 +211,21 @@ func (e *Engine) Run(addr string) (err error) {
 		Handler:           e,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	e.mu.Lock()
+	e.server = server
+	e.mu.Unlock()
 	return server.ListenAndServe()
 }
 
-func (g *RouterGroup) middlewaresCopy() []HandlerFunc {
-	if len(g.middlewares) == 0 {
+// Shutdown 优雅关闭由 Run 启动的服务器：停止接受新连接并等待在途请求完成。
+// 未调用过 Run 时返回 nil。Run 会随之返回 http.ErrServerClosed。
+func (e *Engine) Shutdown(ctx context.Context) error {
+	e.mu.Lock()
+	server := e.server
+	e.mu.Unlock()
+	if server == nil {
 		return nil
 	}
-	return append([]HandlerFunc(nil), g.middlewares...)
+	return server.Shutdown(ctx)
 }
+

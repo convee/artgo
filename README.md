@@ -6,12 +6,16 @@ artgo 是一个用 Go 编写的轻量 Web 框架，提供前缀树路由、路�
 
 ## 功能
 
-- GET/POST 路由与 `:param`、`*filepath` 通配参数
+- GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS 路由，另有 `Handle`（任意方法）与 `Any`
+- `:param`、`*filepath` 通配参数
+- 路径存在但方法不匹配时返回 405 并带 `Allow` 响应头
 - 路由分组与前缀中间件
 - 默认 Logger/Recovery 中间件
 - JSON、Query、Form、Protobuf 绑定
 - `go-playground/validator` 结构体校验
 - JSON/Protobuf/模板/静态文件响应
+- 请求级键值存储 `Context.Set`/`Get`，供中间件向 handler 传值
+- `Engine.Shutdown` 优雅关闭，等待在途请求完成
 - 实现 `http.Handler`，可组合标准库 `http.Server`
 
 ## 安装

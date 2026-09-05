@@ -3,6 +3,7 @@ package artgo
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -64,21 +65,67 @@ func parseRequestPath(path string) []string {
 	return parts
 }
 
-func (r *router) handle(c *Context, prefixHandlers []HandlerFunc) {
+func (r *router) handle(c *Context) {
 	n, params := r.getRoute(c.Method, c.Path)
 
 	if n != nil {
 		c.Params = params
 		c.handlers = n.handlers
-	} else {
-		notFound := func(c *Context) {
-			c.String(http.StatusNotFound, "404 NOT FOUND: %s\n", c.Path)
-		}
-		c.handlers = make([]HandlerFunc, 0, len(prefixHandlers)+1)
-		c.handlers = append(c.handlers, prefixHandlers...)
-		c.handlers = append(c.handlers, notFound)
+		c.Next()
+		return
 	}
+
+	// 未命中才组装全局中间件链：命中路径上不做这次分配
+	var global []HandlerFunc
+	if c.engine != nil {
+		global = c.engine.RouterGroup.middlewares
+	}
+
+	fallback := r.notFoundHandler(c.Path)
+	if allowed := r.allowedMethods(c.Path, c.Method); len(allowed) > 0 {
+		fallback = methodNotAllowedHandler(allowed)
+	}
+
+	c.handlers = make([]HandlerFunc, 0, len(global)+1)
+	c.handlers = append(c.handlers, global...)
+	c.handlers = append(c.handlers, fallback)
 	c.Next()
+}
+
+func (r *router) notFoundHandler(path string) HandlerFunc {
+	return func(c *Context) {
+		c.String(http.StatusNotFound, "404 NOT FOUND: %s\n", path)
+	}
+}
+
+// methodNotAllowedHandler 按 RFC 9110 要求，405 响应必须带 Allow 头
+func methodNotAllowedHandler(allowed []string) HandlerFunc {
+	allowHeader := strings.Join(allowed, ", ")
+	return func(c *Context) {
+		c.SetHeader("Allow", allowHeader)
+		c.String(http.StatusMethodNotAllowed, "405 METHOD NOT ALLOWED: %s\n", c.Method)
+	}
+}
+
+// allowedMethods 返回同一路径下已注册的其他方法，用于区分 404 与 405。
+// 只在未命中路由时调用，不在热路径上。
+func (r *router) allowedMethods(path string, exclude string) []string {
+	if len(r.roots) == 0 {
+		return nil
+	}
+	parts := parseRequestPath(path)
+	allowed := make([]string, 0, len(r.roots))
+	for method, root := range r.roots {
+		if method == exclude {
+			continue
+		}
+		if root.search(parts, 0) != nil {
+			allowed = append(allowed, method)
+		}
+	}
+	// map 遍历顺序随机，必须排序，否则 Allow 头在多次请求间不稳定
+	sort.Strings(allowed)
+	return allowed
 }
 
 func (r *router) addRoute(method string, pattern string, handlers ...HandlerFunc) {
@@ -119,14 +166,14 @@ func (r *router) getRoute(method string, path string) (*node, map[string]string)
 		return nil, nil
 	}
 
-	n := root.search(parseRequestPath(path), 0)
+	searchParts := parseRequestPath(path)
+	n := root.search(searchParts, 0)
 	if n == nil {
 		return nil, nil
 	}
 
 	var params map[string]string
 	if len(n.params) > 0 {
-		searchParts := parseRequestPath(path)
 		params = make(map[string]string, len(n.params))
 		for _, param := range n.params {
 			value := ""
